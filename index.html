@@ -115,6 +115,108 @@ Lots of options:
 
 ---
 
+# Prerequisites
+
+* An organization
+* SecurityHub master/sub accounts configured
+* IAM role for cloud-custodian via StackSets
+* [YAWPS](https://github.com/myoung34/yawps)
+
+---
+
+# YAWPS
+
+[https://github.com/myoung34/yawps](https://github.com/myoung34/yawps)
+
+```remark
+resource "aws_cloudwatch_event_rule" "securityhub_to_yawps" {
+  name        = "securityhub_to_yawps"
+  description = "Fire from SecurityHub events"
+
+  event_pattern = <<PATTERN
+{
+  "source": [
+    "aws.securityhub"
+  ]
+}
+PATTERN
+}
+```
+
+```remark
+    slack.chat.post_message(
+        slack_channel = get_account_tag(finding['AwsAccountId'], 'slack_channel')
+        parsed_message['message'],
+        attachments=parsed_message['attachments']
+    )
+```
+
+---
+
+# Running Cloud-Custodian
+
+```remark
+FROM alpine:3.8
+
+RUN apk add -U --no-cache -t .builddeps \
+  git \
+  alpine-sdk
+
+RUN apk --no-cache add -U \
+  python3 \
+  py3-pip \
+  bash \
+ && pip3 install c7n-org==0.6.10 \
+ && wget https://raw.githubusercontent.com/cloud-custodian/cloud-custodian/master/tools/c7n_org/scripts/orgaccounts.py -O /orgaccounts.py
+
+COPY rules /tmp/rules
+
+RUN rm -rf /tmp/custodian.yml && \
+  echo 'policies:' >/tmp/custodian.yml && \
+  for yml in $(find /tmp/rules -name '*.yml'); do cat "${yml}"; done | grep -v policies: >>/tmp/custodian.yml
+
+
+COPY docker-entrypoint.sh /
+RUN chmod +x /docker-entrypoint.sh
+
+WORKDIR /tmp
+ENTRYPOINT ["/docker-entrypoint.sh"]
+```
+
+---
+
+# Running Cloud-Custodian
+
+```remark
+python3 /orgaccounts.py -r us-east-1 --role "arn:aws:iam::{Id}:role/cloud-custodian" -f accounts.yml
+
+mkdir output
+c7n-org run --debug -c accounts.yml -s output -u /tmp/custodian.yml
+```
+
+---
+
+# Running Cloud-Custodian
+
+```remark
+policies:
+- name: root-keys-or-no-mfa
+  resource: account
+  filters:
+    - type: iam-summary
+      key: AccountMFAEnabled
+      value: False
+      op: eq
+      value_type: swap
+  actions:
+    - type: post-finding
+      severity_normalized: 100
+      types:
+        - "Software and Configuration Checks/AWS Security Best Practices"
+```
+
+--- 
+
 [https://github.com/myoung34/yawps](https://github.com/myoung34/yawps)
 
 [https://github.com/myoung34/awesome-cloudcustodian](https://github.com/myoung34/awesome-cloudcustodian)
